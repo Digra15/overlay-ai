@@ -9,34 +9,61 @@ import java.util.concurrent.ConcurrentLinkedQueue
 class AccessibilityHelper : AccessibilityService() {
 
     companion object {
-        private var instance: AccessibilityHelper? = null
-        private val queue = ConcurrentLinkedQueue<String>()
+    private var instance: AccessibilityHelper? = null
+    private val queue = ConcurrentLinkedQueue<String>()
 
-        fun getInstance() = instance
+    fun getInstance() = instance
 
-        fun queueAction(action: String) {
-            queue.add(action)
-        }
+    fun queueAction(action: String) {
+        queue.add(action)
 
-        fun processQueue() {
-            while (queue.isNotEmpty()) {
-                val action = queue.poll()
-                when (action) {
-                    "CLICK" -> rootInActiveWindow?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    "INPUT:test" -> performInput(rootInActiveWindow, "test")
-                }
-            }
-        }
-
-        private fun performInput(node: AccessibilityNodeInfo?, text: String) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                val args = android.os.Bundle().apply {
-                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
-                }
-                node?.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        instance?.let { service ->
+            android.os.Handler(
+                android.os.Looper.getMainLooper()
+            ).post {
+                service.processQueueInternal()
             }
         }
     }
+}
+
+private fun processQueueInternal() {
+    while (true) {
+        val action = queue.poll() ?: break
+        val root = rootInActiveWindow ?: continue
+
+        when (action) {
+            "CLICK" -> {
+                root.performAction(
+                    AccessibilityNodeInfo.ACTION_CLICK
+                )
+            }
+
+            "INPUT:test" -> {
+                performInput(root, "test")
+            }
+        }
+    }
+}
+
+private fun performInput(
+    node: AccessibilityNodeInfo?,
+    text: String
+) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        val args = android.os.Bundle().apply {
+            putCharSequence(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                text
+            )
+        }
+
+        node?.performAction(
+            AccessibilityNodeInfo.ACTION_SET_TEXT,
+            args
+        )
+    }
+}
 
     override fun onCreate() {
         super.onCreate()
