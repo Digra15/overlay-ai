@@ -1,4 +1,3 @@
-
 name: Build APK
 
 on:
@@ -33,40 +32,34 @@ jobs:
           echo "=== Root files ==="
           ls -la
 
-          echo "=== Gradle wrappers ==="
-          find . -type f -name gradlew \
-            -not -path './.git/*' -print
-
           echo "=== Gradle settings ==="
           find . -type f \( \
             -name settings.gradle \
             -o -name settings.gradle.kts \
           \) -not -path './.git/*' -print
 
-          echo "=== Android manifests ==="
-          find . -type f -name AndroidManifest.xml \
-            -not -path './.git/*' -print
+          SETTINGS_FILE="$(find . -type f \( \
+            -name settings.gradle \
+            -o -name settings.gradle.kts \
+          \) -not -path './.git/*' -print -quit)"
 
-          WRAPPER="$(find . -type f -name gradlew \
-            -not -path './.git/*' -print -quit)"
-
-          if [ -z "$WRAPPER" ]; then
-            echo "::error::No gradlew found. Check whether this repository contains an Android Gradle project."
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "::error::No settings.gradle found. Check whether this repository contains an Android Gradle project."
             exit 1
           fi
 
-          PROJECT_DIR="$(dirname "$WRAPPER")"
+          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          chmod +x "$WRAPPER"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
+          gradle-version: '8.2'
           cache-disabled: true
 
       - name: Build Release APK
         working-directory: ${{ steps.inspect.outputs.project_dir }}
-        run: ./gradlew --no-daemon --stacktrace assembleRelease
+        run: gradle --no-daemon --stacktrace assembleRelease
 
       - name: Find generated APK
         if: success()
