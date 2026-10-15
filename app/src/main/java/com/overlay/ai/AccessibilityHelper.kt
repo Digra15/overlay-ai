@@ -1,92 +1,146 @@
+
 package com.overlay.ai
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.util.concurrent.ConcurrentLinkedQueue
 
 class AccessibilityHelper : AccessibilityService() {
 
     companion object {
-    private var instance: AccessibilityHelper? = null
-    private val queue = ConcurrentLinkedQueue<String>()
+        private var instance: AccessibilityHelper? = null
+        private val queue = ConcurrentLinkedQueue<String>()
+        private val mainHandler = Handler(Looper.getMainLooper())
 
-    fun getInstance() = instance
+        fun getInstance(): AccessibilityHelper? = instance
 
-    fun queueAction(action: String) {
-        queue.add(action)
+        /**
+         * Tambahkan aksi ke antrean.
+         * Aksi diproses oleh instance AccessibilityService di main thread.
+         */
+        fun queueAction(action: String) {
+            queue.offer(action)
 
-        instance?.let { service ->
-            android.os.Handler(
-                android.os.Looper.getMainLooper()
-            ).post {
-                service.processQueueInternal()
+            instance?.let { service ->
+                mainHandler.post {
+                    service.processQueueInternal()
+                }
+            }
+        }
+
+        /**
+         * Dipertahankan untuk kompatibilitas dengan pemanggil lama.
+         */
+        fun processQueue() {
+            instance?.let { service ->
+                mainHandler.post {
+                    service.processQueueInternal()
+                }
             }
         }
     }
-}
 
-private fun processQueueInternal() {
-    while (true) {
-        val action = queue.poll() ?: break
-        val root = rootInActiveWindow ?: continue
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        instance = this
 
-        when (action) {
-            "CLICK" -> {
-                root.performAction(
-                    AccessibilityNodeInfo.ACTION_CLICK
-                )
+        serviceInfo = AccessibilityServiceInfo().apply {
+            eventTypes = AccessibilityEvent.TYPES_ALL_MASK
+            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            flags =
+                AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
+                AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+            notificationTimeout = 100
+        }
+
+        processQueueInternal()
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // Jangan memasukkan CLICK otomatis setiap ada event.
+        // Proses hanya aksi yang memang sudah masuk antrean.
+        processQueueInternal()
+    }
+
+    override fun onInterrupt() {
+        // Service dapat diinterupsi oleh sistem.
+    }
+
+    override fun onDestroy() {
+        if (instance === this) {
+            instance = null
+        }
+        super.onDestroy()
+    }
+
+    private fun processQueueInternal() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post {
+                processQueueInternal()
             }
+            return
+        }
 
-            "INPUT:test" -> {
-                performInput(root, "test")
+        while (true) {
+            val action = queue.poll() ?: break
+
+            when {
+                action == "CLICK" -> performClickOnFocusedNode()
+
+                action.startsWith("INPUT:") -> {
+                    val text = action.substringAfter("INPUT:")
+                    performInputOnFocusedNode(text)
+                }
+
+                else -> {
+                    // Abaikan aksi yang tidak dikenal.
+                }
             }
         }
     }
-}
 
-private fun performInput(
-    node: AccessibilityNodeInfo?,
-    text: String
-) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-        val args = android.os.Bundle().apply {
+    private fun performClickOnFocusedNode() {
+        val root = rootInActiveWindow ?: return
+
+        val focusedNode =
+            root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
+                ?: root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                ?: return
+
+        val clickTarget = if (focusedNode.isClickable) {
+            focusedNode
+        } else {
+            focusedNode.parent?.takeIf { it.isClickable }
+        }
+
+        clickTarget?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+    }
+
+    private fun performInputOnFocusedNode(text: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+
+        val root = rootInActiveWindow ?: return
+        val focusedNode =
+            root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return
+
+        if (!focusedNode.isEditable) return
+
+        val args = Bundle().apply {
             putCharSequence(
                 AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
                 text
             )
         }
 
-        node?.performAction(
+        focusedNode.performAction(
             AccessibilityNodeInfo.ACTION_SET_TEXT,
             args
         )
-    }
-}
-
-    override fun onCreate() {
-        super.onCreate()
-        instance = this
-        serviceInfo = AccessibilityServiceInfo().apply {
-            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-            flags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
-                    AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE or
-                    AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
-            notificationTimeout = 100
-        }
-    }
-
-    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent) {
-        queueAction("CLICK")
-    }
-
-    override fun onInterrupt() {
-        instance = null
-    }
-
-    override fun onServiceConnected() {
-        super.onServiceConnected()
-        instance = this
     }
 }
