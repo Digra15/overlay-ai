@@ -14,7 +14,7 @@
     <application
         android:name=".OverlayApp"
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
+        
         android:label="Overlay AI"
         android:theme="@style/Theme.OverlayAI"
         android:usesCleartextTraffic="true">
