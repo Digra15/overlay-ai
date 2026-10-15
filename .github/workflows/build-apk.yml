@@ -2,21 +2,17 @@
 name: Build APK
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: build-apk-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  build:
-    name: Build Android APK
+  inspect-and-build:
+    name: Detect Android Project and Build APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -24,47 +20,65 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Inspect repository structure
+        id: inspect
+        shell: bash
+        run: |
+          echo "=== Root files ==="
+          ls -la
+
+          echo "=== Gradle wrappers ==="
+          find . -type f -name gradlew \
+            -not -path './.git/*' -print
+
+          echo "=== Gradle settings ==="
+          find . -type f \( \
+            -name settings.gradle \
+            -o -name settings.gradle.kts \
+          \) -not -path './.git/*' -print
+
+          echo "=== Android manifests ==="
+          find . -type f -name AndroidManifest.xml \
+            -not -path './.git/*' -print
+
+          WRAPPER="$(find . -type f -name gradlew \
+            -not -path './.git/*' -print -quit)"
+
+          if [ -z "$WRAPPER" ]; then
+            echo "::error::No gradlew found. Check whether this repository contains an Android Gradle project."
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$WRAPPER")"
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          chmod +x "$WRAPPER"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           cache-disabled: true
 
-      - name: Verify project files
-        run: |
-          echo "Checking Android project files..."
-          test -f gradlew || {
-            echo "::error::Gradle wrapper (gradlew) not found in repository root."
-            exit 1
-          }
-          test -f settings.gradle -o -f settings.gradle.kts || {
-            echo "::error::Gradle settings file not found in repository root."
-            exit 1
-          }
-          chmod +x gradlew
-          echo "Project files verified."
-
       - name: Build Release APK
+        working-directory: ${{ steps.inspect.outputs.project_dir }}
         run: ./gradlew --no-daemon --stacktrace assembleRelease
 
-      - name: List generated APK files
-        if: always()
+      - name: Find generated APK
+        if: success()
         run: |
-          echo "Searching for generated APK files..."
-          find . -type f -name "*.apk" \
-            -not -path "./.git/*" || true
+          find . -type f -name '*.apk' \
+            -not -path './.git/*' -print
 
-      - name: Upload APK artifact
+      - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: overlay-apk
-          path: |
-            **/build/outputs/apk/release/*.apk
+          path: '**/build/outputs/apk/release/*.apk'
           if-no-files-found: error
           retention-days: 7
