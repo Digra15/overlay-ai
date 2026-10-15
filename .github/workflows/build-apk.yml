@@ -10,36 +10,61 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup JDK 17
-        uses: actions/setup-java@v4
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: true
 
-      - name: Check Gradle wrapper
+      - name: Verify project files
         run: |
-          test -f gradlew
+          echo "Checking Android project files..."
+          test -f gradlew || {
+            echo "::error::Gradle wrapper (gradlew) not found in repository root."
+            exit 1
+          }
+          test -f settings.gradle -o -f settings.gradle.kts || {
+            echo "::error::Gradle settings file not found in repository root."
+            exit 1
+          }
           chmod +x gradlew
+          echo "Project files verified."
 
       - name: Build Release APK
-        run: ./gradlew assembleRelease
+        run: ./gradlew --no-daemon --stacktrace assembleRelease
 
-      - name: Upload APK
+      - name: List generated APK files
+        if: always()
+        run: |
+          echo "Searching for generated APK files..."
+          find . -type f -name "*.apk" \
+            -not -path "./.git/*" || true
+
+      - name: Upload APK artifact
+        if: success()
         uses: actions/upload-artifact@v4
-        if: always() && success()
         with:
           name: overlay-apk
-          path: app/build/outputs/apk/release/*.apk
+          path: |
+            **/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 7
